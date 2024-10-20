@@ -6,46 +6,39 @@
 #include <string.h>
 
 #define COMMANDBUFFERSIZE 8
-#define SENDBUFFERSIZE 512
 
 void handle_error(const char *message) {
     perror(message);
     exit(1);
 }
 
-int send_service_output(clientSocket, sendBuffer) {
-    if (send(clientSocket, sendBuffer, SENDBUFFERSIZE, 0) != SENDBUFFERSIZE) {
-        perror("send() failed");
-        close(clientSocket);
-        return 0;
-    }
+char* listService() {
+    return "This is the LIST service.";
 }
 
-void listService() {
-    char* output = "This is the LIST service.";
+char* diffService() {
+    return "This is the DIFF service.";
 }
 
-void diffService() {
-    char* output = "This is the DIFF service.";
+char* pullService() {
+    return "This is the PULL service.";
 }
 
-void pullService() {
-    char* output = "This is the PULL service.";
+char* leaveService() {
+    return "This is the LEAVE service.";
 }
 
-void leaveService() {
-    char* output = "This is the LEAVE service.";
-}
-
-void find_correct_service(char commandBuffer) {
-    if (strcmp(commandBuffer, "LIST")) {
-        listService();
-    } else if (strcmp(commandBuffer, "DIFF")) {
-        diffService();
-    } else if (strcmp(commandBuffer, "PULL")) {
-        pullService();
-    } else if (strcmp(commandBuffer, "LEAVE")) {
-        leaveService();
+char* find_correct_service(const char *commandBuffer) {
+    if (strcmp(commandBuffer, "LIST") == 0) {
+        return listService();
+    } else if (strcmp(commandBuffer, "DIFF") == 0) {
+        return diffService();
+    } else if (strcmp(commandBuffer, "PULL") == 0) {
+        return pullService();
+    } else if (strcmp(commandBuffer, "LEAVE") == 0) {
+        return leaveService();
+    } else {
+        return "Service not available.";
     }
 }
 
@@ -53,7 +46,6 @@ int main(int argc, char *argv[]) {
     int serverSocket;
     int clientSocket;
     char commandBuffer[COMMANDBUFFERSIZE];
-    char sendBuffer[SENDBUFFERSIZE];
     struct sockaddr_in serverAddress;
     struct sockaddr_in clientAddress;
     unsigned short serverPort = 8888;
@@ -103,10 +95,11 @@ int main(int argc, char *argv[]) {
             commandBuffer[receiveSize] = '\0';
 
             // perform service
-            find_correct_service(commandBuffer);
+            char* output = find_correct_service(commandBuffer);
 
-            // send command back
-            if (send(clientSocket, commandBuffer, receiveSize, 0) != receiveSize) {
+            // send output
+            int outputLength = strlen(output);
+            if (send(clientSocket, output, outputLength, 0) != outputLength) {
                 perror("send() failed");
                 close(clientSocket);
                 break;

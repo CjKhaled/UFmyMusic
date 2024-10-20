@@ -6,6 +6,7 @@
 #include <string.h>
 
 #define COMMANDBUFFERSIZE 8
+#define RECEIVEBUFFERSIZE 512
 
 void handle_error(const char *message) {
     perror(message);
@@ -37,8 +38,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in serverAddress;
     int clientSocket;
     char commandBuffer[COMMANDBUFFERSIZE];
-    char receiveBuffer[COMMANDBUFFERSIZE];
-    char *command;
+    char receiveBuffer[RECEIVEBUFFERSIZE];
     
     // create socket
     if ((clientSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
     printf("LIST (Lists all files server currently has saved)\n");
     printf("DIFF (Sends filenames for files you do not have compared to the server)\n");
     printf("PULL (Sends filenames and file contents for files you do not have compared to the server)\n");
-    printf("LEAVE (Exits the program and your connection to the server\n)");
+    printf("LEAVE (Exits the program and your connection to the server)\n");
     
     // continously accept input
     while (1) {
@@ -78,8 +78,8 @@ int main(int argc, char *argv[]) {
         }
 
         // prevent bugs from long input
-        if (len == sizeof(commandBuffer) - 1) {
-            flush_input();  // Flush the extra input
+        if (len == sizeof(commandBuffer) - 1 && commandBuffer[len - 1] != '\n') {
+            flush_input();
         }
 
         // validate 
@@ -94,7 +94,7 @@ int main(int argc, char *argv[]) {
 
             // receive and print response from server
             int receiveSize;
-            if ((receiveSize = recv(clientSocket, receiveBuffer, COMMANDBUFFERSIZE - 1, 0)) <= 0) {
+            if ((receiveSize = recv(clientSocket, receiveBuffer, RECEIVEBUFFERSIZE - 1, 0)) <= 0) {
                 close(clientSocket);
                 handle_error("recv() failed");
             }
