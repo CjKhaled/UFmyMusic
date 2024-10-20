@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
     // set address
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddress.sin_port = htons(8888);
+    serverAddress.sin_port = htons(9999);
 
     // connect to server
     if (connect(clientSocket, (struct sockaddr *) &serverAddress, sizeof(serverAddress)) < 0) {

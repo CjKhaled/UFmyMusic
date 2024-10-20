@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #define COMMANDBUFFERSIZE 8
 
@@ -15,20 +17,44 @@ void handle_error(const char *message) {
 
 char* listService() {
     printf("Starting the LIST service...\n");
-    char buffer[1024] = {0};
-    int bufferSize = sizeof(buffer);
+
+    // dynamically allocatting memory since it's temporary
+    char *buffer = malloc(512 * sizeof(char));
+    if (buffer == NULL) {
+        perror("malloc failed\n");
+        return "Could not send files.";
+    }
+
+    buffer[0] = '\0';
+    int bufferSize = 512;
 
     DIR *d;
     struct dirent *dir;
-    d = opendir("."); // Open the current directory
+    struct stat fileStat;
+    char path[512];
+    d = opendir("./server");
+
     if (d) {
         while ((dir = readdir(d)) != NULL) {
-            if (dir->d_type == DT_REG) { // Only regular files
-                strncat(buffer, dir->d_name, bufferSize - strlen(buffer) - 1); // Add filename to buffer
-                strncat(buffer, " ", bufferSize - strlen(buffer) - 1); // Add space as delimiter
+            // ignore server file
+            if (strcmp(dir->d_name, "server-f.c") == 0) {
+                continue;
+            }
+
+            snprintf(path, sizeof(path), "./server/%s", dir->d_name);
+
+            // for some reason DT_REG wouldn't work
+            if (stat(path, &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                strncat(buffer, dir->d_name, bufferSize - strlen(buffer) - 1);
+                strncat(buffer, " ", bufferSize - strlen(buffer) - 1);
             }
         }
+
         closedir(d);
+    } else {
+        perror("opendir failed\n");
+        free(buffer);
+        return "Could not send files.";
     }
 
     return buffer;
@@ -98,6 +124,11 @@ void* handleClientConnect(void *connectedClientPointer) {
             perror("send() failed\n");
             break;
         }
+
+        // quick fix for now, change later
+        if (strncmp(output, "Could", 5) != 0 && strncmp(output, "This", 4) != 0) {
+            free(output);
+        }
     }
 
     close(connectedClient->clientSocket);
@@ -110,7 +141,7 @@ void* handleClientConnect(void *connectedClientPointer) {
 int main(int argc, char *argv[]) {
     int serverSocket;
     struct sockaddr_in serverAddress, clientAddress;
-    unsigned short serverPort = 8888;
+    unsigned short serverPort = 9999;
     socklen_t clientLength;
 
     // create socket
