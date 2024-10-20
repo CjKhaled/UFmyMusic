@@ -13,18 +13,22 @@ void handle_error(const char *message) {
 }
 
 char* listService() {
+    printf("Starting the LIST service...");
     return "This is the LIST service.";
 }
 
 char* diffService() {
+    printf("Starting the DIFF service...");
     return "This is the DIFF service.";
 }
 
 char* pullService() {
+    printf("Starting the PULL service...");
     return "This is the PULL service.";
 }
 
 char* leaveService() {
+    printf("Starting the LEAVE service...");
     return "This is the LEAVE service.";
 }
 
@@ -75,12 +79,15 @@ int main(int argc, char *argv[]) {
 
     // accept connections
     while (1) {
+        printf("Waiting for connections...");
         // connect to client
         clientLength = sizeof(clientAddress);
         if ((clientSocket = accept(serverSocket, (struct sockaddr *) &clientAddress, &clientLength)) < 0) {
             perror("accept() failed");
             continue;
         }
+
+        printf("Connected to client at %s\n", inet_ntoa(clientAddress.sin_addr));
 
         // stay connected indefinitely
         while (1) {
@@ -98,6 +105,7 @@ int main(int argc, char *argv[]) {
             char* output = find_correct_service(commandBuffer);
 
             // send output
+            printf("Sending output...");
             int outputLength = strlen(output);
             if (send(clientSocket, output, outputLength, 0) != outputLength) {
                 perror("send() failed");
@@ -105,7 +113,7 @@ int main(int argc, char *argv[]) {
                 break;
             }
         }
-
+        printf("Closing connection...");
         close(clientSocket);
     }
 
