@@ -15,7 +15,23 @@ void handle_error(const char *message) {
 
 char* listService() {
     printf("Starting the LIST service...\n");
-    return "This is the LIST service.";
+    char buffer[1024] = {0};
+    int bufferSize = sizeof(buffer);
+
+    DIR *d;
+    struct dirent *dir;
+    d = opendir("."); // Open the current directory
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            if (dir->d_type == DT_REG) { // Only regular files
+                strncat(buffer, dir->d_name, bufferSize - strlen(buffer) - 1); // Add filename to buffer
+                strncat(buffer, " ", bufferSize - strlen(buffer) - 1); // Add space as delimiter
+            }
+        }
+        closedir(d);
+    }
+
+    return buffer;
 }
 
 char* diffService() {
