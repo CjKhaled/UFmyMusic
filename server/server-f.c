@@ -18,6 +18,7 @@ void handle_error(const char *message) {
 }
 
 bool compare_hashes(const unsigned char hash1[], const unsigned char hash2[], int length) {
+    //must input longer of the 2 lengths to check for correctness
     return memcmp(hash1, hash2, length) == 0;
 }
 
