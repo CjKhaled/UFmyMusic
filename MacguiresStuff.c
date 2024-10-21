@@ -2,8 +2,45 @@
 #include <openssl/evp.h>
 #include <stdlib.h>
 
+
+#include <fcntl.h>
+
 #define HASH_SIZE 65
 #define CHUNK_SIZE 8192  // Read in 8KB chunks
+#define BUFFER_SIZE 1024
+
+int send_file(int socket_fd, const char *file_name) {
+    int file_fd;
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read, bytes_sent;
+
+    // Open the file for reading
+    file_fd = open(file_name, O_RDONLY);
+    if (file_fd < 0) {
+        perror("Error opening file");
+        return -1;
+    }
+
+    // Send the file contents
+    while ((bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0) {
+        bytes_sent = send(socket_fd, buffer, bytes_read, 0);
+        if (bytes_sent < 0) {
+            perror("Error sending file");
+            close(file_fd);
+            return -1;
+        }
+    }
+
+    if (bytes_read < 0) {
+        perror("Error reading file");
+        close(file_fd);
+        return -1;
+    }
+
+    // Close the file after sending
+    close(file_fd);
+    return 0;
+}
 
 unsigned char sha256_file(const char *filename) {
     FILE *file = fopen(filename, "rb");
