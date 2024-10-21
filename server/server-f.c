@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <openssl/evp.h>
+#include <stdbool.h>
 
 #define COMMANDBUFFERSIZE 8
 
@@ -16,17 +17,11 @@ void handle_error(const char *message) {
     exit(1);
 }
 
-bool compare_hashes(unsigned char hash1[], unsigned char hash2[]) {
-    // Compare the two hash arrays byte by byte
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-        if (hash1[i] != hash2[i]) {
-            return false;  // Hashes are not equal
-        }
-    }
-    return true;  // Hashes are equal
+bool compare_hashes(const unsigned char hash1[], const unsigned char hash2[], int length) {
+    return memcmp(hash1, hash2, length) == 0;
 }
 
-void sha256_file(const char *filename) {
+unsigned char sha256_file(const char *filename) {
     FILE *file = fopen(filename, "rb");
     if (!file) {
         perror("File opening failed");
