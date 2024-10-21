@@ -131,6 +131,72 @@ void listService(struct ResponseMessage *response) {
 
 void diffService(struct ResponseMessage *response) {
     printf("Starting the DIFF service...\n");
+
+    char *buffer = malloc(1024 * sizeof(char)); // Larger buffer for file names + hashes
+    if (buffer == NULL) {
+        perror("malloc failed\n");
+        strcpy(response->commandBuffer, "ERROR");
+        strcpy(response->error, "Could not send files.");
+        return;
+    }
+
+    buffer[0] = '\0';
+    int bufferSize = 1024;
+
+    DIR *d;
+    struct dirent *dir;
+    struct stat fileStat;
+    char path[512];
+    d = opendir("./server");
+
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            // Ignore server file or directories
+            if (strcmp(dir->d_name, "server-f.c") == 0 || dir->d_type == DT_DIR) {
+                continue;
+            }
+
+            snprintf(path, sizeof(path), "./server/%s", dir->d_name);
+
+            // Check if it is a regular file
+            if (stat(path, &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                // Compute SHA-256 hash using the existing hash function
+                unsigned char *hash = sha256_file(path);
+                if (hash == NULL) {
+                    free(buffer);
+                    closedir(d);
+                    strcpy(response->commandBuffer, "ERROR");
+                    strcpy(response->error, "Hashing failed.");
+                    return;
+                }
+
+                // Convert hash to a readable hex string
+                char hexHash[HASH_SIZE] = {0};
+                for (int i = 0; i < 32; i++) { // SHA-256 produces 32-byte hashes
+                    snprintf(hexHash + (i * 2), 3, "%02x", hash[i]);
+                }
+
+                // Append file name and hash to the buffer
+                strncat(buffer, dir->d_name, bufferSize - strlen(buffer) - 1);
+                strncat(buffer, " : ", bufferSize - strlen(buffer) - 1);
+                strncat(buffer, hexHash, bufferSize - strlen(buffer) - 1);
+                strncat(buffer, "\n", bufferSize - strlen(buffer) - 1);
+            }
+        }
+
+        closedir(d);
+        // Copy the final output to the response
+        strcpy(response->output, buffer);
+        free(buffer);
+    } else {
+        // Handle directory open failure
+        perror("opendir failed\n");
+        free(buffer);
+        strcpy(response->commandBuffer, "ERROR");
+        strcpy(response->error, "Could not send files.");
+        return;
+    }
+
     strcpy(response->output, "This is the DIFF service.");
 }
 
