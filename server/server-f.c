@@ -8,21 +8,49 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+
 #define COMMANDBUFFERSIZE 8
+#define MAXHASHMAPSIZE 50
+#define MAXOUTPUTSIZE 512
+#define MAXERRORSIZE 256
+
+struct ConnectedClientDetails {
+    int clientSocket;
+};
+
+struct HashMap {
+    int size;
+    char keys[MAXHASHMAPSIZE][100];
+    unsigned char values[MAXHASHMAPSIZE][32];
+};
+
+struct RequestMessage {
+    char commandBuffer[COMMANDBUFFERSIZE];
+    struct HashMap map;
+};
+
+struct ResponseMessage {
+    char commandBuffer[COMMANDBUFFERSIZE];
+    struct HashMap map;
+    char output[MAXOUTPUTSIZE];
+    char error[MAXERRORSIZE];
+};
 
 void handle_error(const char *message) {
     perror(message);
     exit(1);
 }
 
-char* listService() {
+void listService(struct ResponseMessage *response) {
     printf("Starting the LIST service...\n");
 
     // dynamically allocatting memory since it's temporary
     char *buffer = malloc(512 * sizeof(char));
     if (buffer == NULL) {
         perror("malloc failed\n");
-        return "Could not send files.";
+        strcpy(response->commandBuffer, "ERROR");
+        strcpy(response->error, "Could not send files.");
+        return;
     }
 
     buffer[0] = '\0';
@@ -51,83 +79,88 @@ char* listService() {
         }
 
         closedir(d);
+        // use the output and/or map fields for successful responses
+        strcpy(response->output, buffer);
+        free(buffer);
     } else {
+        // if an error occurs, set the command buffer to ERROR
+        // set the error to the error message the client should see
         perror("opendir failed\n");
         free(buffer);
-        return "Could not send files.";
+        strcpy(response->commandBuffer, "ERROR");
+        strcpy(response->error, "Could not send files.");
+        return;
     }
-
-    return buffer;
 }
 
-char* diffService() {
+void diffService(struct ResponseMessage *response) {
     printf("Starting the DIFF service...\n");
-    return "This is the DIFF service.";
+    strcpy(response->output, "This is the DIFF service.");
 }
 
-char* pullService() {
+void pullService(struct ResponseMessage *response) {
     printf("Starting the PULL service...\n");
-    return "This is the PULL service.";
+    strcpy(response->output, "This is the PULL service.");
 }
 
-char* leaveService() {
+void leaveService(struct ResponseMessage *response) {
     printf("Starting the LEAVE service...\n");
-    return "This is the LEAVE service.";
+    strcpy(response->output, "This is the LEAVE service.");
 }
 
-char* find_correct_service(const char *commandBuffer) {
-    if (strcmp(commandBuffer, "LIST") == 0) {
-        return listService();
-    } else if (strcmp(commandBuffer, "DIFF") == 0) {
-        return diffService();
-    } else if (strcmp(commandBuffer, "PULL") == 0) {
-        return pullService();
-    } else if (strcmp(commandBuffer, "LEAVE") == 0) {
-        return leaveService();
+void craft_response(const struct RequestMessage *request, struct ResponseMessage *response) {
+    // instead of sending back strings, the server will craft responses using structs
+    // whatever service is sent in the commandBuffer is how the client knows what to read
+    if (strcmp(request->commandBuffer, "LIST") == 0) {
+        strcpy(response->commandBuffer, "LIST");
+        listService(response);
+    } else if (strcmp(request->commandBuffer, "DIFF") == 0) {
+        strcpy(response->commandBuffer, "DIFF");
+        diffService(response);
+    } else if (strcmp(request->commandBuffer, "PULL") == 0) {
+        strcpy(response->commandBuffer, "PULL");
+        pullService(response);
+    } else if (strcmp(request->commandBuffer, "LEAVE") == 0) {
+        strcpy(response->commandBuffer, "LEAVE");
+        leaveService(response);
     } else {
-        return "Service not available.\n";
+        strcpy(response->commandBuffer, "ERROR");
+        strcpy(response->error, "Service does not exist.");
     }
 }
-
-struct ConnectedClientDetails {
-    int clientSocket;
-    char commandBuffer[COMMANDBUFFERSIZE];
-};
 
 void* handleClientConnect(void *connectedClientPointer) {
     // for some reason, i HAVE to pass in a void pointer
     struct ConnectedClientDetails *connectedClient = (struct ConnectedClientDetails*) connectedClientPointer;
 
     while (1) {
-        // receive command from client
-        int receiveSize;
-        if ((receiveSize = recv(connectedClient->clientSocket, connectedClient->commandBuffer, COMMANDBUFFERSIZE - 1, 0)) <= 0) {
-            if (receiveSize == 0) {
-                printf("Closing connection...\n");
-                printf("Closed connection with client.\n");
-            } else {
-                perror("recv() failed\n");
-            }
+        // refactor to recieving and sending request structs instead of strings
+        struct RequestMessage request;
+        struct ResponseMessage response;
 
-            break;
+        // bug fix, tcp sends as a stream of bytes so ensure all of request message is received
+        int totalReceived = 0;
+        while (totalReceived < sizeof(struct RequestMessage)) {
+            int n = recv(connectedClient->clientSocket, ((char*)&request) + totalReceived, sizeof(struct RequestMessage) - totalReceived, 0);
+            if (n <= 0) {
+                if (n == 0) {
+                    printf("Closed connection with client.\n");
+                } else {
+                    perror("recv() failed\n");
+                }
+                break;
+            }
+            totalReceived += n;
         }
 
-        connectedClient->commandBuffer[receiveSize] = '\0';
+        // create response
+        craft_response(&request, &response);
 
-        // perform service
-        char* output = find_correct_service(connectedClient->commandBuffer);
-
-        // send output
-        printf("Sending output...\n");
-        int outputLength = strlen(output);
-        if (send(connectedClient->clientSocket, output, outputLength, 0) != outputLength) {
+        // send response
+        printf("Sending response...\n");
+        if (send(connectedClient->clientSocket, &response, sizeof(response), 0) != sizeof(response)) {
             perror("send() failed\n");
             break;
-        }
-
-        // quick fix for now, change later
-        if (strncmp(output, "Could", 5) != 0 && strncmp(output, "This", 4) != 0) {
-            free(output);
         }
     }
 
