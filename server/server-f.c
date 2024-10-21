@@ -7,12 +7,42 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <openssl/evp.h>
 
 #define COMMANDBUFFERSIZE 8
 
 void handle_error(const char *message) {
     perror(message);
     exit(1);
+}
+
+void sha256_file(const char *filename) {
+    FILE *file = fopen(filename, "rb");
+    if (!file) {
+        perror("File opening failed");
+        return;
+    }
+
+    EVP_MD_CTX *mdctx;
+    const EVP_MD *md = EVP_sha256();
+    unsigned char buffer[CHUNK_SIZE];
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+
+    mdctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(mdctx, md, NULL);
+
+    size_t bytesRead = 0;
+    while ((bytesRead = fread(buffer, 1, CHUNK_SIZE, file))) {
+        EVP_DigestUpdate(mdctx, buffer, bytesRead);
+    }
+
+    EVP_DigestFinal_ex(mdctx, hash, &hash_len);
+    EVP_MD_CTX_free(mdctx);
+
+    fclose(file);
+
+    return hash;
 }
 
 char* listService() {
