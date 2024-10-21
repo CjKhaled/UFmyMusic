@@ -14,6 +14,7 @@
 #define MAXHASHMAPSIZE 50
 #define MAXOUTPUTSIZE 512
 #define MAXERRORSIZE 256
+#define CHUNK_SIZE 8192
 
 struct ConnectedClientDetails {
     int clientSocket;
@@ -40,40 +41,6 @@ struct ResponseMessage {
 void handle_error(const char *message) {
     perror(message);
     exit(1);
-}
-
-bool compare_hashes(const unsigned char hash1[], const unsigned char hash2[], int length) {
-    //must input longer of the 2 lengths to check for correctness
-    return memcmp(hash1, hash2, length) == 0;
-}
-
-unsigned char sha256_file(const char *filename) {
-    FILE *file = fopen(filename, "rb");
-    if (!file) {
-        perror("File opening failed");
-        return;
-    }
-
-    EVP_MD_CTX *mdctx;
-    const EVP_MD *md = EVP_sha256();
-    unsigned char buffer[CHUNK_SIZE];
-    unsigned char hash[EVP_MAX_MD_SIZE];
-    unsigned int hash_len;
-
-    mdctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(mdctx, md, NULL);
-
-    size_t bytesRead = 0;
-    while ((bytesRead = fread(buffer, 1, CHUNK_SIZE, file))) {
-        EVP_DigestUpdate(mdctx, buffer, bytesRead);
-    }
-
-    EVP_DigestFinal_ex(mdctx, hash, &hash_len);
-    EVP_MD_CTX_free(mdctx);
-
-    fclose(file);
-
-    return hash;
 }
 
 bool compare_hashes(const unsigned char hash1[], const unsigned char hash2[], int length) {
