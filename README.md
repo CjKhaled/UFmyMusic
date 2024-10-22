@@ -23,3 +23,5 @@ This is setup to only be able to interact with whatever is in the ./server/ and 
 A surplus of files that the client could send has no effect on the DIFF or PULL service. The server simply just checks if the client does **not** have what the server currently contains.
 
 The server determines this by first checking the filename. If they are the same, it will then compare the hash of the file contents.
+
+This will rewrite files, so be cautious you don't have a file with the same name as the server, but with content you want saved.
