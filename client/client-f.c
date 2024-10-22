@@ -196,7 +196,7 @@ int main(int argc, char *argv[]) {
     // set address
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1");
-    serverAddress.sin_port = htons(9999);
+    serverAddress.sin_port = htons(8555);
 
     // connect to server
     if (connect(clientSocket, (struct sockaddr *) &serverAddress, sizeof(serverAddress)) < 0) {
@@ -263,6 +263,10 @@ int main(int argc, char *argv[]) {
                     exit(1);
                 }
                 totalReceived += n;
+            }
+
+            if (strcmp(response.commandBuffer, "LEAVE") == 0) {
+                break;  
             }
 
             // print the server's response

@@ -12,7 +12,7 @@
 int send_file(int socket_fd, const char *file_name) {
     int file_fd;
     char buffer[BUFFER_SIZE];
-    ssize_t bytes_read, bytes_sent;
+    size_t bytes_read, bytes_sent;
 
     // Open the file for reading
     file_fd = open(file_name, O_RDONLY);

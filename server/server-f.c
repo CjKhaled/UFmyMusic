@@ -43,22 +43,23 @@ void handle_error(const char *message) {
     exit(1);
 }
 
-bool compare_hashes(const unsigned char hash1[], const unsigned char hash2[], int length) {
-    //must input longer of the 2 lengths to check for correctness
-    return memcmp(hash1, hash2, length) == 0;
-}
-
-unsigned char sha256_file(const char *filename) {
+unsigned char* sha256_file(const char *filename) {
     FILE *file = fopen(filename, "rb");
     if (!file) {
         perror("File opening failed");
-        return;
+        return NULL;
     }
 
     EVP_MD_CTX *mdctx;
     const EVP_MD *md = EVP_sha256();
-    unsigned char buffer[CHUNK_SIZE];
-    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned char buffer[CHUNK_SIZE];    
+    unsigned char *hash = malloc(EVP_MAX_MD_SIZE);
+    if (!hash) {
+        perror("Could not allocate memory for hash\n");
+        fclose(file);
+        return NULL;
+    };
+
     unsigned int hash_len;
 
     mdctx = EVP_MD_CTX_new();
@@ -71,10 +72,59 @@ unsigned char sha256_file(const char *filename) {
 
     EVP_DigestFinal_ex(mdctx, hash, &hash_len);
     EVP_MD_CTX_free(mdctx);
-
     fclose(file);
 
     return hash;
+}
+
+bool createHashMap(struct HashMap *map) {
+    // for each filename the server has saved, 
+    // add it as a key and add it's hashed contents as a value
+    DIR *d;
+    struct dirent *dir;
+    struct stat fileStat;
+    char path[512];
+    unsigned char *fileHash;
+    d = opendir("./server");
+
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            // ignore server file
+            if (strcmp(dir->d_name, "server-f.c") == 0) {
+                continue;
+            }
+
+            snprintf(path, sizeof(path), "./server/%s", dir->d_name);
+
+            if (stat(path, &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
+                // make sure hashmap doesn't overflow
+                if (map->size >= MAXHASHMAPSIZE) {
+                    perror("Maximum of 50 files allowed.\n");
+                    break;
+                }
+
+                strcpy(map->keys[map->size], dir->d_name);
+                fileHash = sha256_file(path);
+                if (fileHash) {
+                    memcpy(map->values[map->size], fileHash, 32);
+                    free(fileHash);
+
+                } else {
+                    strcpy(map->values[map->size], dir->d_name);
+                    printf("Failed to generate file hash for %s\n", dir->d_name);
+                }
+
+                map->size++;
+            }
+        }
+
+        closedir(d);
+    } else {
+        perror("opendir failed\n");
+        return false;
+    }
+
+    return true;
 }
 
 void listService(struct ResponseMessage *response) {
@@ -129,75 +179,47 @@ void listService(struct ResponseMessage *response) {
     }
 }
 
-void diffService(struct ResponseMessage *response) {
+void diffService(struct ResponseMessage *response, const struct RequestMessage *request) {
     printf("Starting the DIFF service...\n");
-
-    char *buffer = malloc(1024 * sizeof(char)); // Larger buffer for file names + hashes
+    // the request contains the filenames and hashes the client has, and the server has the same structure
+    // for each filename the server has, look for it in the client
+    // if there is match, check their hashes
+    // if their hashes match, we don't need to send the file back to server
+    // populate the response content with the remaining keys separated by a space
+    char *buffer = malloc(512 * sizeof(char));
     if (buffer == NULL) {
         perror("malloc failed\n");
         strcpy(response->commandBuffer, "ERROR");
-        strcpy(response->error, "Could not send files.");
+        strcpy(response->error, "Could not allocate memory.");
         return;
     }
-
+    
     buffer[0] = '\0';
-    int bufferSize = 1024;
 
-    DIR *d;
-    struct dirent *dir;
-    struct stat fileStat;
-    char path[512];
-    d = opendir("./server");
-
-    if (d) {
-        while ((dir = readdir(d)) != NULL) {
-            // Ignore server file or directories
-            if (strcmp(dir->d_name, "server-f.c") == 0 || dir->d_type == DT_DIR) {
-                continue;
-            }
-
-            snprintf(path, sizeof(path), "./server/%s", dir->d_name);
-
-            // Check if it is a regular file
-            if (stat(path, &fileStat) == 0 && S_ISREG(fileStat.st_mode)) {
-                // Compute SHA-256 hash using the existing hash function
-                unsigned char *hash = sha256_file(path);
-                if (hash == NULL) {
-                    free(buffer);
-                    closedir(d);
-                    strcpy(response->commandBuffer, "ERROR");
-                    strcpy(response->error, "Hashing failed.");
-                    return;
+    for (int i = 0; i < response->map.size; i++) {
+        bool found = false;
+        for (int j = 0; j < request->map.size; j++) {
+            if (strcmp(response->map.keys[i], request->map.keys[j]) == 0) {
+                if (memcmp(response->map.values[i], request->map.values[j], 32) == 0) {
+                    found = true;
+                    break;
                 }
-
-                // Convert hash to a readable hex string
-                char hexHash[HASH_SIZE] = {0};
-                for (int i = 0; i < 32; i++) { // SHA-256 produces 32-byte hashes
-                    snprintf(hexHash + (i * 2), 3, "%02x", hash[i]);
-                }
-
-                // Append file name and hash to the buffer
-                strncat(buffer, dir->d_name, bufferSize - strlen(buffer) - 1);
-                strncat(buffer, " : ", bufferSize - strlen(buffer) - 1);
-                strncat(buffer, hexHash, bufferSize - strlen(buffer) - 1);
-                strncat(buffer, "\n", bufferSize - strlen(buffer) - 1);
             }
         }
-
-        closedir(d);
-        // Copy the final output to the response
-        strcpy(response->output, buffer);
-        free(buffer);
-    } else {
-        // Handle directory open failure
-        perror("opendir failed\n");
-        free(buffer);
-        strcpy(response->commandBuffer, "ERROR");
-        strcpy(response->error, "Could not send files.");
-        return;
+        
+        if (!found) {
+            strncat(buffer, response->map.keys[i], 512 - strlen(buffer) - 1);
+            strncat(buffer, " ", 512 - strlen(buffer) - 1);
+        }
     }
 
-    strcpy(response->output, "This is the DIFF service.");
+    if (strlen(buffer) == 0) {
+        strcpy(response->output, "No differences found.");
+    } else {
+        strcpy(response->output, buffer);
+    }
+
+    free(buffer);
 }
 
 void pullService(struct ResponseMessage *response) {
@@ -207,7 +229,7 @@ void pullService(struct ResponseMessage *response) {
 
 void leaveService(struct ResponseMessage *response) {
     printf("Starting the LEAVE service...\n");
-    strcpy(response->output, "This is the LEAVE service.");
+    strcpy(response->output, "Client has requested to leave. Goodbye!");
 }
 
 void craft_response(const struct RequestMessage *request, struct ResponseMessage *response) {
@@ -218,7 +240,7 @@ void craft_response(const struct RequestMessage *request, struct ResponseMessage
         listService(response);
     } else if (strcmp(request->commandBuffer, "DIFF") == 0) {
         strcpy(response->commandBuffer, "DIFF");
-        diffService(response);
+        diffService(response, request);
     } else if (strcmp(request->commandBuffer, "PULL") == 0) {
         strcpy(response->commandBuffer, "PULL");
         pullService(response);
@@ -239,6 +261,12 @@ void* handleClientConnect(void *connectedClientPointer) {
         // refactor to recieving and sending request structs instead of strings
         struct RequestMessage request;
         struct ResponseMessage response;
+        struct HashMap map = {.size = 0};
+
+        // populate map
+        createHashMap(&map);
+        response.map = map;
+        
 
         // bug fix, tcp sends as a stream of bytes so ensure all of request message is received
         int totalReceived = 0;
@@ -258,6 +286,14 @@ void* handleClientConnect(void *connectedClientPointer) {
         // create response
         craft_response(&request, &response);
 
+        if (strcmp(request.commandBuffer, "LEAVE") == 0) {
+            printf("Client requested to leave. Closing connection...\n");
+            if (send(connectedClient->clientSocket, &response, sizeof(response), 0) != sizeof(response)) {
+                perror("send() failed\n");
+            }
+            break;
+        }
+
         // send response
         printf("Sending response...\n");
         if (send(connectedClient->clientSocket, &response, sizeof(response), 0) != sizeof(response)) {
@@ -276,12 +312,18 @@ void* handleClientConnect(void *connectedClientPointer) {
 int main(int argc, char *argv[]) {
     int serverSocket;
     struct sockaddr_in serverAddress, clientAddress;
-    unsigned short serverPort = 9999;
+    unsigned short serverPort = 8555;
     socklen_t clientLength;
 
     // create socket
     if ((serverSocket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
         handle_error("socket() failed\n");
+    }
+
+    // quick bug fix, port would still be in use after terminating the server
+    int opt = 1;
+    if (setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        handle_error("setsockopt() failed\n");
     }
 
     // set address
