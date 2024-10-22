@@ -253,7 +253,7 @@ void pullService(struct ResponseMessage *response, const struct RequestMessage *
     if (response->map.size == 0) {
         strcpy(response->output, "No pull necessary.");
     } else {
-        strcpy(response->output, "Starting file transfer...");
+        strcpy(response->output, "Completed file transer.");
     }
 }
 
@@ -281,6 +281,81 @@ void craft_response(const struct RequestMessage *request, struct ResponseMessage
         strcpy(response->commandBuffer, "ERROR");
         strcpy(response->error, "Service does not exist.");
     }
+}
+
+int send_files(int clientSocket, struct HashMap *map) {
+    for (int i = 0; i < map->size; i++) {
+        char filePath[512];
+        snprintf(filePath, sizeof(filePath), "./server/%s", map->keys[i]);
+        
+        // Get file size
+        struct stat st;
+        if (stat(filePath, &st) != 0) {
+            perror("Failed to get file stats");
+            continue;
+        }
+        long fileSize = st.st_size;
+        
+        // Send filename length and filename
+        int filenameLen = strlen(map->keys[i]) + 1;
+        if (send(clientSocket, &filenameLen, sizeof(int), 0) != sizeof(int)) {
+            perror("Failed to send filename length");
+            return -1;
+        }
+        
+        if (send(clientSocket, map->keys[i], filenameLen, 0) != filenameLen) {
+            perror("Failed to send filename");
+            return -1;
+        }
+
+        // Send file size
+        if (send(clientSocket, &fileSize, sizeof(long), 0) != sizeof(long)) {
+            perror("Failed to send file size");
+            return -1;
+        }
+        
+        // Open and send file
+        FILE *file = fopen(filePath, "rb");
+        if (!file) {
+            perror("Failed to open file");
+            return -1;
+        }
+        
+        unsigned char buffer[CHUNK_SIZE];
+        size_t bytesRead;
+        long totalBytesSent = 0;
+
+        while ((bytesRead = fread(buffer, 1, CHUNK_SIZE, file)) > 0) {
+            if (send(clientSocket, buffer, bytesRead, 0) != bytesRead) {
+                perror("Failed to send file content");
+                fclose(file);
+                return -1;
+            }
+            totalBytesSent += bytesRead;
+            
+            // Print progress
+            float progress = ((float)totalBytesSent / fileSize) * 100;
+            printf("\rSending %s: %.1f%%", map->keys[i], progress);
+            fflush(stdout);
+        }
+        printf("\n");
+        
+        fclose(file);
+    }
+
+    // Send end-of-files marker
+    const char *eofMarker = "EOF_ALL";
+    int markerLen = strlen(eofMarker) + 1;
+    if (send(clientSocket, &markerLen, sizeof(int), 0) != sizeof(int)) {
+        perror("Failed to send EOF marker length");
+        return -1;
+    }
+    if (send(clientSocket, eofMarker, markerLen, 0) != markerLen) {
+        perror("Failed to send EOF marker");
+        return -1;
+    }
+    
+    return 0;
 }
 
 void* handleClientConnect(void *connectedClientPointer) {
@@ -333,46 +408,7 @@ void* handleClientConnect(void *connectedClientPointer) {
 
         // client is still expecting file content if there is a DIFF
         if (strcmp(response.commandBuffer, "PULL") == 0) {
-            unsigned char buffer[CHUNK_SIZE];
-            size_t bytesRead;
-            bool filesSent = false;
-            char filePath[512];
-            for (int i = 0; i < response.map.size; i++) {
-                snprintf(filePath, sizeof(filePath), "./server/%s", response.map.keys[i]);
-
-                FILE *file = fopen(filePath, "rb");
-                if (file == NULL) {
-                    perror("File open failed");
-                    break;
-                }
-
-                // Send the filename
-                size_t filenameLen = strlen(response.map.keys[i]) + 1;
-                if (send(connectedClient->clientSocket, response.map.keys[i], filenameLen, 0) != filenameLen) {
-                    perror("send() failed for filename");
-                    fclose(file);
-                    break;
-                }
-
-                // Send the file content in chunks
-                while ((bytesRead = fread(buffer, 1, CHUNK_SIZE, file)) > 0) {
-                    if (send(connectedClient->clientSocket, buffer, bytesRead, 0) != bytesRead) {
-                        perror("send() failed for file content");
-                        fclose(file);
-                        break;
-                    }
-                }
-
-                // Send EOF marker to signal end of file
-                char eofMarker[] = "EOF";
-                if (send(connectedClient->clientSocket, eofMarker, sizeof(eofMarker), 0) != sizeof(eofMarker)) {
-                    perror("send() failed for EOF");
-                    fclose(file);
-                    break;
-                }
-
-                fclose(file);
-            }
+            send_files(connectedClient->clientSocket, &response.map);
         }
     }
 

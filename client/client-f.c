@@ -179,6 +179,101 @@ struct RequestMessage craft_request(const char *command, struct HashMap *map) {
     return request;
 }
 
+int receive_files(int clientSocket) {
+    char filename[FILENAMESBUFFERSIZE];
+    unsigned char fileBuffer[CHUNK_SIZE];
+    int bytesReceived;
+
+    while (1) {
+        memset(filename, 0, FILENAMESBUFFERSIZE);
+        int totalReceived = 0;
+        int expectedLen = 0;
+        
+        // First receive the length of the filename
+        if (recv(clientSocket, &expectedLen, sizeof(int), 0) <= 0) {
+            perror("Failed to receive filename length");
+            return -1;
+        }
+
+         // Then receive the filename itself
+        while (totalReceived < expectedLen) {
+            bytesReceived = recv(clientSocket, filename + totalReceived, 
+                               expectedLen - totalReceived, 0);
+            if (bytesReceived <= 0) {
+                perror("Failed receiving filename");
+                return -1;
+            }
+            totalReceived += bytesReceived;
+        }
+
+        // Check for end of all files
+        if (strcmp(filename, "EOF_ALL") == 0) {
+            printf("All files received successfully.\n");
+            break;
+        }
+
+        // Receive file size
+        long fileSize;
+        if (recv(clientSocket, &fileSize, sizeof(long), 0) <= 0) {
+            perror("Failed to receive file size");
+            return -1;
+        }
+
+        printf("Receiving file: %s (size: %ld bytes)\n", filename, fileSize);
+
+        // Create the file path and open file
+        char filePath[512];
+        snprintf(filePath, sizeof(filePath), "./client/%.100s", filename);
+
+        // Check if path is a directory
+        struct stat fileStat;
+        if (stat(filePath, &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) {
+            fprintf(stderr, "Error: %s is a directory\n", filePath);
+            return -1;
+        }
+        
+        FILE *file = fopen(filePath, "wb");
+        if (!file) {
+            perror("Failed to open file for writing");
+            return -1;
+        }
+
+        // Receive file content with progress tracking
+        long totalBytesReceived = 0;
+        while (totalBytesReceived < fileSize) {
+            size_t remaining = fileSize - totalBytesReceived;
+            size_t toRead = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+            
+            bytesReceived = recv(clientSocket, fileBuffer, toRead, 0);
+            if (bytesReceived <= 0) {
+                perror("Error receiving file content");
+                fclose(file);
+                return -1;
+            }
+            
+            size_t written = fwrite(fileBuffer, 1, bytesReceived, file);
+            if (written != bytesReceived) {
+                perror("Error writing to file");
+                fclose(file);
+                return -1;
+            }
+            
+            totalBytesReceived += bytesReceived;
+            
+            // Print progress
+            float progress = ((float)totalBytesReceived / fileSize) * 100;
+            printf("\rReceiving %s: %.1f%%", filename, progress);
+            fflush(stdout);
+        }
+        printf("\n"); // New line after progress
+        
+        fclose(file);
+        printf("Successfully received: %s\n", filename);
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct sockaddr_in serverAddress;
     int clientSocket;
@@ -270,76 +365,7 @@ int main(int argc, char *argv[]) {
             }
 
             if (strcmp(commandBuffer, "PULL") == 0) {
-                char filename[FILENAMESBUFFERSIZE];
-                unsigned char fileBuffer[CHUNK_SIZE];
-                int bytesReceived;
-
-                if (strcmp(response.output, "No pull necessary.") == 0) {
-                    continue;
-                }
-
-                while (1) {
-                    // First receive the filename
-                    bytesReceived = recv(clientSocket, filename, FILENAMESBUFFERSIZE - 1, 0);
-                    if (bytesReceived <= 0) {
-                        if (bytesReceived == 0) {
-                            printf("Server closed connection.\n");
-                        } else {
-                            perror("recv() failed (filename)");
-                        }
-                        close(clientSocket);
-                        exit(1);
-                    }
-                    filename[bytesReceived] = '\0';
-
-                    // If "EOF" is received, stop receiving files
-                    if (strcmp(filename, "EOF") == 0) {
-                        printf("All files received.\n");
-                        break;
-                    }
-
-                    printf("Received filename: '%s'\n", filename);
-
-                    // Open the file for writing
-                    char filePath[512];
-                    snprintf(filePath, sizeof(filePath), "./client/%.100s", filename);
-                    struct stat fileStat;
-                    if (stat(filePath, &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) {
-                        fprintf(stderr, "Failed to open file for writing: %s is a directory\n", filePath);
-                        continue;
-                    }
-                    FILE *file = fopen(filePath, "wb");
-                    if (!file) {
-                        perror("Failed to open file for writing");
-                        continue;
-                    }
-
-                    // Receive file content in chunks
-                    while (1) {
-                        bytesReceived = recv(clientSocket, fileBuffer, CHUNK_SIZE, 0);
-                        if (bytesReceived <= 0) {
-                            if (bytesReceived == 0) {
-                                printf("Server closed connection.\n");
-                            } else {
-                                perror("recv() failed (file content)");
-                            }
-                            fclose(file);
-                            close(clientSocket);
-                            exit(1);
-                        }
-
-                        // Check if "EOF" marker for file content is received
-                        if (strncmp((char *)fileBuffer, "EOF", 3) == 0) {
-                            printf("Received complete file: %s\n", filename);
-                            break;
-                        }
-
-                        // Write the received content to the file
-                        fwrite(fileBuffer, 1, bytesReceived, file);
-                    }
-
-                    fclose(file);
-                }
+                receive_files(clientSocket);
             }
 
             // print the server's response
