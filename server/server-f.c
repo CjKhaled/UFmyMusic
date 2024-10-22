@@ -222,9 +222,39 @@ void diffService(struct ResponseMessage *response, const struct RequestMessage *
     free(buffer);
 }
 
-void pullService(struct ResponseMessage *response) {
+void pullService(struct ResponseMessage *response, const struct RequestMessage *request) {
     printf("Starting the PULL service...\n");
-    strcpy(response->output, "This is the PULL service.");
+    // figure out what files need to be sent
+    // send filenames and file content
+    // file content will have to be sent in chunks, with a marker to determine the end of a file
+
+    for (int i = 0; i < response->map.size; i++) {
+        bool found = false;
+
+        for (int j = 0; j < request->map.size; j++) {
+            if (strcmp(response->map.keys[i], request->map.keys[j]) == 0) {
+                if (memcmp(response->map.values[i], request->map.values[j], 32) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (found) {
+            for (int k = i; k < response->map.size - 1; k++) {
+                strcpy(response->map.keys[k], response->map.keys[k + 1]);
+                memcpy(response->map.values[k], response->map.values[k + 1], 32);
+            }
+            response->map.size--;  
+            i--; 
+        }
+    }
+
+    if (response->map.size == 0) {
+        strcpy(response->output, "No pull necessary.");
+    } else {
+        strcpy(response->output, "Starting file transfer...");
+    }
 }
 
 void leaveService(struct ResponseMessage *response) {
@@ -243,7 +273,7 @@ void craft_response(const struct RequestMessage *request, struct ResponseMessage
         diffService(response, request);
     } else if (strcmp(request->commandBuffer, "PULL") == 0) {
         strcpy(response->commandBuffer, "PULL");
-        pullService(response);
+        pullService(response, request);
     } else if (strcmp(request->commandBuffer, "LEAVE") == 0) {
         strcpy(response->commandBuffer, "LEAVE");
         leaveService(response);
@@ -299,6 +329,50 @@ void* handleClientConnect(void *connectedClientPointer) {
         if (send(connectedClient->clientSocket, &response, sizeof(response), 0) != sizeof(response)) {
             perror("send() failed\n");
             break;
+        }
+
+        // client is still expecting file content if there is a DIFF
+        if (strcmp(response.commandBuffer, "PULL") == 0) {
+            unsigned char buffer[CHUNK_SIZE];
+            size_t bytesRead;
+            bool filesSent = false;
+            char filePath[512];
+            for (int i = 0; i < response.map.size; i++) {
+                snprintf(filePath, sizeof(filePath), "./server/%s", response.map.keys[i]);
+
+                FILE *file = fopen(filePath, "rb");
+                if (file == NULL) {
+                    perror("File open failed");
+                    break;
+                }
+
+                // Send the filename
+                size_t filenameLen = strlen(response.map.keys[i]) + 1;
+                if (send(connectedClient->clientSocket, response.map.keys[i], filenameLen, 0) != filenameLen) {
+                    perror("send() failed for filename");
+                    fclose(file);
+                    break;
+                }
+
+                // Send the file content in chunks
+                while ((bytesRead = fread(buffer, 1, CHUNK_SIZE, file)) > 0) {
+                    if (send(connectedClient->clientSocket, buffer, bytesRead, 0) != bytesRead) {
+                        perror("send() failed for file content");
+                        fclose(file);
+                        break;
+                    }
+                }
+
+                // Send EOF marker to signal end of file
+                char eofMarker[] = "EOF";
+                if (send(connectedClient->clientSocket, eofMarker, sizeof(eofMarker), 0) != sizeof(eofMarker)) {
+                    perror("send() failed for EOF");
+                    fclose(file);
+                    break;
+                }
+
+                fclose(file);
+            }
         }
     }
 

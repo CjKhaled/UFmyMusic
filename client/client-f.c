@@ -269,6 +269,79 @@ int main(int argc, char *argv[]) {
                 break;  
             }
 
+            if (strcmp(commandBuffer, "PULL") == 0) {
+                char filename[FILENAMESBUFFERSIZE];
+                unsigned char fileBuffer[CHUNK_SIZE];
+                int bytesReceived;
+
+                if (strcmp(response.output, "No pull necessary.") == 0) {
+                    continue;
+                }
+
+                while (1) {
+                    // First receive the filename
+                    bytesReceived = recv(clientSocket, filename, FILENAMESBUFFERSIZE - 1, 0);
+                    if (bytesReceived <= 0) {
+                        if (bytesReceived == 0) {
+                            printf("Server closed connection.\n");
+                        } else {
+                            perror("recv() failed (filename)");
+                        }
+                        close(clientSocket);
+                        exit(1);
+                    }
+                    filename[bytesReceived] = '\0';
+
+                    // If "EOF" is received, stop receiving files
+                    if (strcmp(filename, "EOF") == 0) {
+                        printf("All files received.\n");
+                        break;
+                    }
+
+                    printf("Received filename: '%s'\n", filename);
+
+                    // Open the file for writing
+                    char filePath[512];
+                    snprintf(filePath, sizeof(filePath), "./client/%.100s", filename);
+                    struct stat fileStat;
+                    if (stat(filePath, &fileStat) == 0 && S_ISDIR(fileStat.st_mode)) {
+                        fprintf(stderr, "Failed to open file for writing: %s is a directory\n", filePath);
+                        continue;
+                    }
+                    FILE *file = fopen(filePath, "wb");
+                    if (!file) {
+                        perror("Failed to open file for writing");
+                        continue;
+                    }
+
+                    // Receive file content in chunks
+                    while (1) {
+                        bytesReceived = recv(clientSocket, fileBuffer, CHUNK_SIZE, 0);
+                        if (bytesReceived <= 0) {
+                            if (bytesReceived == 0) {
+                                printf("Server closed connection.\n");
+                            } else {
+                                perror("recv() failed (file content)");
+                            }
+                            fclose(file);
+                            close(clientSocket);
+                            exit(1);
+                        }
+
+                        // Check if "EOF" marker for file content is received
+                        if (strncmp((char *)fileBuffer, "EOF", 3) == 0) {
+                            printf("Received complete file: %s\n", filename);
+                            break;
+                        }
+
+                        // Write the received content to the file
+                        fwrite(fileBuffer, 1, bytesReceived, file);
+                    }
+
+                    fclose(file);
+                }
+            }
+
             // print the server's response
             printf("Response: %s\n", response.output);
             if (strcmp(response.commandBuffer, "ERROR") == 0) {
